@@ -66,6 +66,28 @@ inline void setValueAtIndex(jsi::IRuntime &runtime, const jsi::Array &array, siz
   array.setValueAtIndex(runtime, index, value);
 }
 
+/**
+ Destroys `count` values in place. `jsi::Value::~Value()` is out-of-line in the engine library, so it's
+ called only for a value that holds an engine handle.
+ */
+inline void destroyValues(jsi::Value *_Nonnull values, size_t count) noexcept {
+  for (size_t i = 0; i < count; i++) {
+    jsi::Value &value = values[i];
+    if (!value.isUndefined() && !value.isNull() && !value.isBool() && !value.isNumber()) {
+      value.~Value();
+    }
+  }
+}
+
+/**
+ Appends `count` values to the end of `array` with one engine call, then destroys them, so the memory
+ can take the next values.
+ */
+inline void pushValues(jsi::IRuntime &runtime, const jsi::Array &array, jsi::Value *_Nonnull values, size_t count) {
+  runtime.push(array, values, count);
+  destroyValues(values, count);
+}
+
 inline void setArrayLength(jsi::IRuntime &runtime, const jsi::Array &array, long length) {
   auto oldLength = (int)array.size(runtime);
   auto newLength = (int)length;
@@ -230,6 +252,19 @@ inline void emplaceMovedValue(jsi::Value *_Nonnull slot, jsi::Value *_Nonnull so
  */
 inline jsi::Value createStringValueFromUtf8(jsi::IRuntime &runtime, const uint8_t *_Nonnull utf8, size_t length) {
   return jsi::Value(jsi::String::createFromUtf8(runtime, utf8, length));
+}
+
+/**
+ Constructs a string value from UTF-8 bytes in the slot, so the value is not moved afterwards. Placement
+ new, like the `emplace*` helpers above: the slot must hold a value that owns nothing. A null `utf8` makes
+ an empty string.
+ */
+inline void emplaceStringFromUtf8(jsi::IRuntime &runtime, jsi::Value *_Nonnull slot, const uint8_t *_Nullable utf8, size_t length) {
+  if (utf8 == nullptr) {
+    ::new (slot) jsi::Value(jsi::String::createFromAscii(runtime, "", 0));
+    return;
+  }
+  ::new (slot) jsi::Value(jsi::String::createFromUtf8(runtime, utf8, length));
 }
 
 /**

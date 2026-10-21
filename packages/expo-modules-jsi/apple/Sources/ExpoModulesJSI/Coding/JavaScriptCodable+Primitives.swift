@@ -671,6 +671,12 @@ func genericDecodeBigInt<T: FixedWidthInteger>(_ bigInt: borrowing JavaScriptBig
 /// whose JS mapping stays a `number`; the explicitly-sized 64-bit types encode as a `bigint` instead.
 @JavaScriptActor
 func genericEncodeSafeInteger<T: FixedWidthInteger>(_ value: T) throws -> JavaScriptValue {
+  return .number(try safeIntegerNumber(value))
+}
+
+/// Converts a 64-bit-wide integer to the `Double` of a JS `number`, throwing when it falls outside
+/// JavaScript's safe-integer range.
+func safeIntegerNumber<T: FixedWidthInteger>(_ value: T) throws -> Double {
   // `Number.MAX_SAFE_INTEGER` (2^53 - 1): the largest magnitude where every integer up to it, and the
   // next one, is representable as a JS number. 2^53 itself is representable but unsafe (it collides with
   // 2^53 + 1), so the bound is exclusive above this. Used by `Int`/`UInt`, both 64-bit, so 2^53 fits.
@@ -678,7 +684,7 @@ func genericEncodeSafeInteger<T: FixedWidthInteger>(_ value: T) throws -> JavaSc
   guard value.magnitude <= maxSafeInteger else {
     throw UnsafeIntegerException(value: "\(value)")
   }
-  return .number(Double(value))
+  return Double(value)
 }
 
 /// Thrown when a JavaScript number cannot be represented as the target integer type because it is

@@ -941,6 +941,94 @@ private func createFunctionClosure(
   return expo.HostFunctionClosure(context, call, deallocate)
 }
 
+// MARK: - Creating arrays from elements
+
+extension JavaScriptRuntime {
+  /// Creates an array of `count` values, where `element` returns the value at each index.
+  @usableFromInline
+  internal func createArray(count: Int, _ element: (_ index: Int) throws -> JavaScriptValue) throws
+    -> JavaScriptValue
+  {
+    return try createArray(count: count) { index, slot in
+      // A local `var` takes the returned value in place. Passing the call result straight to a
+      // `consuming` parameter moves it once more, and each move of a `jsi::Value` calls into the engine.
+      var value = try element(index)
+      if value.runtimeHandle != nil {
+        expo.emplaceMovedValue(slot, &value.pointee)
+      } else if value.pointee.isNumber() {
+        expo.emplaceNumber(slot, value.pointee.getNumber())
+      } else if value.pointee.isBool() {
+        expo.emplaceBool(slot, value.pointee.getBool())
+      } else if value.pointee.isNull() {
+        expo.emplaceNull(slot)
+      } else {
+        expo.emplaceUndefined(slot)
+      }
+    }
+  }
+
+  /// Creates an array of numbers. No `JavaScriptValue` is created for the elements.
+  @usableFromInline
+  internal func createNumberArray(_ numbers: [Double]) -> JavaScriptValue {
+    return createArray(count: numbers.count) { index, slot in
+      expo.emplaceNumber(slot, numbers[index])
+    }
+  }
+
+  /// Creates an array of numbers from integers, throwing for an integer outside JavaScript's
+  /// safe-integer range. No `JavaScriptValue` is created for the elements.
+  @usableFromInline
+  internal func createNumberArray(_ integers: [Int]) throws -> JavaScriptValue {
+    return try createArray(count: integers.count) { index, slot in
+      expo.emplaceNumber(slot, try safeIntegerNumber(integers[index]))
+    }
+  }
+
+  /// Creates an array of strings. No `JavaScriptValue` is created for the elements.
+  @usableFromInline
+  internal func createStringArray(_ strings: [String]) -> JavaScriptValue {
+    return createArray(count: strings.count) { index, slot in
+      var string = strings[index]
+      string.withUTF8 { utf8 in
+        expo.emplaceStringFromUtf8(pointee, slot, utf8.baseAddress, utf8.count)
+      }
+    }
+  }
+
+  /// Creates an array of `count` values that `emplace` constructs in the given slots. The values are
+  /// appended to the array in chunks, with one engine call per chunk.
+  @inline(__always)
+  private func createArray<E: Error>(
+    count: Int,
+    emplace: (_ index: Int, _ slot: UnsafeMutablePointer<facebook.jsi.Value>) throws(E) -> Void
+  ) throws(E) -> JavaScriptValue {
+    var array = facebook.jsi.Array(pointee, 0)
+    if count > 0 {
+      try withUnsafeTemporaryAllocation(of: facebook.jsi.Value.self, capacity: min(count, 64)) { chunk throws(E) in
+        let start = chunk.baseAddress!
+        var pending = 0
+        defer {
+          // Values are left here only when `emplace` throws.
+          expo.destroyValues(start, pending)
+        }
+        for index in 0..<count {
+          try emplace(index, start + pending)
+          pending += 1
+          if pending == chunk.count {
+            expo.pushValues(pointee, array, start, pending)
+            pending = 0
+          }
+        }
+        if pending > 0 {
+          expo.pushValues(pointee, array, start, pending)
+          pending = 0
+        }
+      }
+    }
+    return JavaScriptValue(handle, expo.takeValueFromArray(&array))
+  }
+}
+
 // MARK: - Errors
 
 extension JavaScriptRuntime {

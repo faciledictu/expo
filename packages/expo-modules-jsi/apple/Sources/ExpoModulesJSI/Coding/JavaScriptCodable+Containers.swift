@@ -50,12 +50,22 @@ extension Array: JavaScriptEncodable where Element: JavaScriptEncodable {
   public static func encode(_ value: [Element], in runtime: borrowing JavaScriptRuntime) throws
     -> JavaScriptValue
   {
-    let jsArray = runtime.createArray(length: value.count)
-    // The array is created with one slot per element, so every index is in bounds.
-    for (index, element) in value.enumerated() {
-      jsArray.setValueUnchecked(try Element.encode(element, in: runtime), at: index)
+    // Numbers and strings are written straight into the array, with no `JavaScriptValue` per element.
+    // The checks compare concrete types, so the specialized code keeps only the branch that matches. In
+    // that branch `Element` is the cast's target type, so `unsafeBitCast` reinterprets nothing, while
+    // `as!` would build a new array element by element.
+    if Element.self == Double.self {
+      return runtime.createNumberArray(unsafeBitCast(value, to: [Double].self))
     }
-    return jsArray.takeValue()
+    if Element.self == Int.self {
+      return try runtime.createNumberArray(unsafeBitCast(value, to: [Int].self))
+    }
+    if Element.self == String.self {
+      return runtime.createStringArray(unsafeBitCast(value, to: [String].self))
+    }
+    return try runtime.createArray(count: value.count) { index in
+      return try Element.encode(value[index], in: runtime)
+    }
   }
 }
 
